@@ -9,8 +9,7 @@ import websockets
 from websockets.client import WebSocketClientProtocol
 
 from .protocol import (
-    ActionEnvelope,
-    ActionPayload,
+    ActionMessage,
     AckMessage,
     StateMessage,
 )
@@ -63,7 +62,7 @@ class BridgeClient:
             self.connected = False
             raise ConnectionError(f"Failed to connect to bridge: {e}")
 
-    async def send_action(self, action: ActionPayload) -> bool:
+    async def send_action(self, action: ActionMessage) -> bool:
         """
         Send an action to the Minecraft bridge.
 
@@ -78,14 +77,8 @@ class BridgeClient:
 
         start = time.perf_counter()
 
-        envelope = ActionEnvelope(
-            type="action",
-            ts=self._get_timestamp_ms(),
-            payload=action,
-        )
-
         try:
-            await self.ws.send(envelope.model_dump_json())
+            await self.ws.send(action.model_dump_json())
             self._last_send_time = time.perf_counter() - start
             return True
         except Exception as e:

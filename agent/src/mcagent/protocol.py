@@ -1,67 +1,23 @@
 """WebSocket protocol message schemas for Minecraft bridge communication."""
 
-from enum import Enum
 from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
-class Key(str, Enum):
-    """Valid keyboard keys."""
-
-    W = "W"
-    A = "A"
-    S = "S"
-    D = "D"
-    SPACE = "SPACE"
-    SHIFT = "SHIFT"
-    CTRL = "CTRL"
-    E = "E"
-    Q = "Q"
-    F = "F"
-    ESC = "ESC"
-    SPRINT = "SPRINT"
-
-
-class Click(str, Enum):
-    """Valid click actions."""
-
-    NONE = "NONE"
-    LMB = "LMB"
-    RMB = "RMB"
-    MMB = "MMB"
-
-
-class Keys(BaseModel):
-    """Key press and release actions."""
-
-    down: list[Key] = Field(default_factory=list)
-    up: list[Key] = Field(default_factory=list)
-
-
-class Mouse(BaseModel):
-    """Mouse movement deltas."""
-
-    yaw_delta_deg: float = Field(ge=-12, le=12)
-    pitch_delta_deg: float = Field(ge=-12, le=12)
-
-
-class ActionPayload(BaseModel):
-    """Payload for an action command."""
-
-    id: str
-    duration_ms: int = Field(ge=20, le=2000)
-    keys: Keys
-    mouse: Mouse
-    click: Click
-    hotbar: int = Field(ge=0, le=9, description="0 means no change; 1-9 selects slot")
-
-
-class ActionEnvelope(BaseModel):
-    """Complete action message envelope."""
+class ActionMessage(BaseModel):
+    """Action message matching Java Protocol.ActionMessage."""
 
     type: Literal["action"] = "action"
-    ts: int
-    payload: ActionPayload
+    forward: float = Field(ge=-1.0, le=1.0, default=0.0)  # -1.0 to 1.0
+    strafe: float = Field(ge=-1.0, le=1.0, default=0.0)   # -1.0 to 1.0
+    yaw: float = Field(default=0.0)     # degrees (absolute, not delta)
+    pitch: float = Field(default=0.0)   # degrees (absolute, not delta)
+    jump: bool = False
+    attack: bool = False
+    use: bool = False
+    sneak: bool = False
+    sprint: bool = False
+    duration_ms: int = Field(ge=20, le=2000, default=150)
 
 
 class Capabilities(BaseModel):
@@ -87,20 +43,13 @@ class HelloMessage(BaseModel):
     payload: HelloPayload
 
 
-class AckPayload(BaseModel):
-    """Acknowledgment payload."""
-
-    action_id: str
-    applied: bool
-    err: Optional[str] = None
-
-
 class AckMessage(BaseModel):
-    """Acknowledgment message."""
+    """Acknowledgment message from Java bridge."""
 
     type: Literal["ack"] = "ack"
-    ts: int
-    payload: AckPayload
+    action_type: str
+    success: bool
+    error: Optional[str] = None
 
 
 class PlayerState(BaseModel):
@@ -137,4 +86,4 @@ class StateMessage(BaseModel):
 
 
 # Union type for all message types
-Message = HelloMessage | ActionEnvelope | AckMessage | StateMessage
+Message = HelloMessage | ActionMessage | AckMessage | StateMessage

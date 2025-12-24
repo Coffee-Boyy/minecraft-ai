@@ -283,10 +283,10 @@ def test_connection():
 
                 if bridge.latest_state:
                     console.print("[green]✓ Received state update[/green]")
-                    state = bridge.latest_state.payload
-                    console.print(f"  Position: {state.player.pos}")
-                    console.print(f"  Health: {state.hud.health}")
-                    console.print(f"  Hunger: {state.hud.hunger}")
+                    player = bridge.latest_state.player
+                    console.print(f"  Position: ({player.x:.1f}, {player.y:.1f}, {player.z:.1f})")
+                    console.print(f"  Health: {player.health:.1f}")
+                    console.print(f"  Hunger: {player.food:.1f}")
                 else:
                     console.print("[yellow]⚠ No state message received[/yellow]")
 

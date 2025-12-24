@@ -40,7 +40,7 @@ class Config:
             action_duration_ms_default=int(os.getenv("ACTION_DURATION_MS_DEFAULT", "150")),
             kill_switch_key=os.getenv("KILL_SWITCH_KEY", "F10"),
             max_actions_per_minute=int(os.getenv("MAX_ACTIONS_PER_MINUTE", "1200")),
-            capture_resolution=(854, 480),  # 480p as per spec
+            capture_resolution=(960, 540),  # 540p
             jpeg_quality=float(os.getenv("JPEG_QUALITY", "0.75")),
         )
 

@@ -158,10 +158,11 @@ class AgentLoop:
             # 2. Get state dict for context
             state_dict = None
             if self.latest_state:
+                player = self.latest_state.player
                 state_dict = {
-                    "pos": self.latest_state.payload.player.pos,
-                    "health": self.latest_state.payload.hud.health,
-                    "hunger": self.latest_state.payload.hud.hunger,
+                    "pos": (player.x, player.y, player.z),
+                    "health": player.health,
+                    "hunger": player.food,
                 }
 
             # 3. Get action from policy
@@ -190,7 +191,7 @@ class AgentLoop:
     def _on_ack(self, ack: AckMessage):
         """Callback for action acknowledgments."""
         self.latest_ack = ack
-        if ack.payload.applied:
+        if ack.success:
             self.stats["actions_acked"] += 1
 
     def _generate_stats_table(self) -> Table:
@@ -222,11 +223,10 @@ class AgentLoop:
         # Add latest state info if available
         if self.latest_state:
             table.add_row("---", "---")
-            player = self.latest_state.payload.player
-            hud = self.latest_state.payload.hud
-            table.add_row("Position", f"({player.pos[0]:.1f}, {player.pos[1]:.1f}, {player.pos[2]:.1f})")
-            table.add_row("Health", f"{hud.health:.1f}")
-            table.add_row("Hunger", f"{hud.hunger:.1f}")
+            player = self.latest_state.player
+            table.add_row("Position", f"({player.x:.1f}, {player.y:.1f}, {player.z:.1f})")
+            table.add_row("Health", f"{player.health:.1f}")
+            table.add_row("Hunger", f"{player.food:.1f}")
 
         return table
 

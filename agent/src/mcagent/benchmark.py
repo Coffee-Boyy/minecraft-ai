@@ -42,8 +42,8 @@ class BenchmarkRunner:
 
         # Metrics
         self.metrics: list[dict] = []
-        self.ack_times: dict[str, float] = {}
         self.latest_state: Optional[StateMessage] = None
+        self.acks_received: int = 0
 
     async def run(self):
         """Run the benchmark."""
@@ -93,9 +93,6 @@ class BenchmarkRunner:
 
     async def _run_iteration(self, benchmark_start: float):
         """Execute one benchmark iteration."""
-        iter_start = time.perf_counter()
-        action_id = f"bench_{int(time.time() * 1000)}"
-
         try:
             # Capture frame
             t0 = time.perf_counter()
@@ -113,27 +110,26 @@ class BenchmarkRunner:
                 goal="benchmark test",
                 state=None,
             )
-            action.id = action_id
             t3 = time.perf_counter()
             t_vlm_ms = (t3 - t2) * 1000
 
             # Send to bridge
             t4 = time.perf_counter()
-            self.ack_times[action_id] = time.perf_counter()
             await self.bridge.send_action(action)
             t5 = time.perf_counter()
             t_ws_send_ms = (t5 - t4) * 1000
 
-            # Record metrics (ack time will be filled in by callback)
+            # Calculate end-to-end time (capture + VLM + send)
+            end_to_end_ms = t_capture_ms + t_vlm_ms + t_ws_send_ms
+
+            # Record metrics
             self.metrics.append(
                 {
                     "timestamp": time.time() - benchmark_start,
-                    "action_id": action_id,
                     "t_capture_ms": t_capture_ms,
                     "t_vlm_ms": t_vlm_ms,
                     "t_ws_send_ms": t_ws_send_ms,
-                    "t_ack_ms": None,  # Will be filled in by callback
-                    "end_to_end_ms": None,  # Will be calculated
+                    "end_to_end_ms": end_to_end_ms,
                 }
             )
 
@@ -146,24 +142,8 @@ class BenchmarkRunner:
 
     def _on_ack(self, ack: AckMessage):
         """Callback for action acknowledgments."""
-        action_id = ack.payload.action_id
-        if action_id in self.ack_times:
-            # Calculate ack time
-            ack_time_ms = (time.perf_counter() - self.ack_times[action_id]) * 1000
-
-            # Find corresponding metric and update it
-            for metric in self.metrics:
-                if metric["action_id"] == action_id:
-                    metric["t_ack_ms"] = ack_time_ms
-                    metric["end_to_end_ms"] = (
-                        metric["t_capture_ms"]
-                        + metric["t_vlm_ms"]
-                        + metric["t_ws_send_ms"]
-                        + ack_time_ms
-                    )
-                    break
-
-            del self.ack_times[action_id]
+        if ack.success:
+            self.acks_received += 1
 
     def _analyze_results(self):
         """Analyze and display benchmark results."""
@@ -171,19 +151,14 @@ class BenchmarkRunner:
             self.console.print("[red]No metrics collected[/red]")
             return
 
-        # Filter out incomplete metrics
-        complete_metrics = [m for m in self.metrics if m["end_to_end_ms"] is not None]
-
-        if not complete_metrics:
-            self.console.print("[yellow]No complete end-to-end measurements[/yellow]")
-            complete_metrics = self.metrics
+        complete_metrics = self.metrics
 
         # Calculate statistics
         n = len(complete_metrics)
         capture_times = [m["t_capture_ms"] for m in complete_metrics]
         vlm_times = [m["t_vlm_ms"] for m in complete_metrics]
         send_times = [m["t_ws_send_ms"] for m in complete_metrics]
-        e2e_times = [m["end_to_end_ms"] for m in complete_metrics if m["end_to_end_ms"]]
+        e2e_times = [m["end_to_end_ms"] for m in complete_metrics]
 
         def calc_stats(values):
             if not values:
@@ -208,7 +183,7 @@ class BenchmarkRunner:
         # Display results
         self.console.print("\n[cyan]Benchmark Results:[/cyan]\n")
         self.console.print(f"Total iterations: {len(self.metrics)}")
-        self.console.print(f"Complete measurements: {len(complete_metrics)}\n")
+        self.console.print(f"Acks received: {self.acks_received}\n")
 
         self.console.print("[yellow]Capture times (ms):[/yellow]")
         self._print_stats(capture_stats)

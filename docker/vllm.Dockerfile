@@ -17,11 +17,4 @@ RUN mkdir -p /root/.cache/huggingface
 EXPOSE 8000
 
 # Start vLLM server with OpenAI-compatible API
-CMD python -m vllm.entrypoints.openai.api_server \
-    --model ${MODEL_NAME} \
-    --host ${HOST} \
-    --port ${PORT} \
-    --max-model-len ${MAX_MODEL_LEN} \
-    --gpu-memory-utilization ${GPU_MEMORY_UTIL} \
-    --dtype auto \
-    --enforce-eager false
+CMD ["sh", "-c", "vllm serve ${MODEL_NAME} --host ${HOST} --port ${PORT} --max-model-len ${MAX_MODEL_LEN} --gpu-memory-utilization ${GPU_MEMORY_UTIL} --dtype auto"]
