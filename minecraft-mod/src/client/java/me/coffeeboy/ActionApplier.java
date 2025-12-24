@@ -1,0 +1,157 @@
+package me.coffeeboy;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.phys.Vec2;
+
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Consumer;
+
+public class ActionApplier {
+    private final Minecraft minecraft;
+    private final ConcurrentLinkedQueue<PendingAction> actionQueue = new ConcurrentLinkedQueue<>();
+
+    private static class PendingAction {
+        Protocol.ActionMessage action;
+        Consumer<Protocol.AckMessage> callback;
+        long startTime;
+        long endTime;
+
+        PendingAction(Protocol.ActionMessage action, Consumer<Protocol.AckMessage> callback) {
+            this.action = action;
+            this.callback = callback;
+            this.startTime = System.currentTimeMillis();
+            this.endTime = startTime + action.duration_ms;
+        }
+    }
+
+    public ActionApplier(Minecraft minecraft) {
+        this.minecraft = minecraft;
+    }
+
+    public void applyAction(Protocol.ActionMessage action, Consumer<Protocol.AckMessage> callback) {
+        // Add to queue for processing on game thread
+        actionQueue.offer(new PendingAction(action, callback));
+    }
+
+    public void tick() {
+        LocalPlayer player = minecraft.player;
+        if (player == null) {
+            return;
+        }
+
+        long currentTime = System.currentTimeMillis();
+
+        // Process queued actions
+        while (!actionQueue.isEmpty()) {
+            PendingAction pending = actionQueue.peek();
+            if (pending == null) break;
+
+            // Check if this is a new action or ongoing
+            if (currentTime >= pending.endTime) {
+                // Action completed, remove from queue
+                actionQueue.poll();
+
+                // Send acknowledgment
+                Protocol.AckMessage ack = new Protocol.AckMessage();
+                ack.action_type = pending.action.type;
+                ack.success = true;
+                pending.callback.accept(ack);
+
+                // Reset inputs
+                player.input.forwardImpulse = 0;
+                player.input.leftImpulse = 0;
+                player.input.jumping = false;
+                player.input.shiftKeyDown = false;
+                player.setSprinting(false);
+
+                continue;
+            }
+
+            // Apply the action for this tick
+            Protocol.ActionMessage action = pending.action;
+
+            // Movement
+            if (action.forward != 0 || action.strafe != 0) {
+                player.input.forwardImpulse = action.forward;
+                player.input.leftImpulse = action.strafe;
+            }
+
+            // Look
+            if (action.yaw != 0 || action.pitch != 0) {
+                float newYaw = player.getYRot() + action.yaw;
+                float newPitch = Math.max(-90.0F, Math.min(90.0F, player.getXRot() + action.pitch));
+                player.setYRot(newYaw);
+                player.setXRot(newPitch);
+                player.yRotO = newYaw;
+                player.xRotO = newPitch;
+            }
+
+            // Jump
+            if (action.jump) {
+                player.input.jumping = true;
+            }
+
+            // Attack (left click)
+            if (action.attack && minecraft.gameMode != null) {
+                var hitResult = player.pick(4.5, 0, false);
+                if (hitResult instanceof net.minecraft.world.phys.EntityHitResult entityHit) {
+                    minecraft.gameMode.attack(player, entityHit.getEntity());
+                } else if (hitResult instanceof net.minecraft.world.phys.BlockHitResult) {
+                    // Just swing for blocks
+                    player.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+                }
+            }
+
+            // Use (right click)
+            if (action.use && minecraft.gameMode != null) {
+                minecraft.gameMode.useItem(player, player.getUsedItemHand());
+            }
+
+            // Sneak
+            if (action.sneak) {
+                player.input.shiftKeyDown = true;
+            }
+
+            // Sprint
+            if (action.sprint) {
+                player.setSprinting(true);
+            }
+
+            // Only process the first action in queue per tick
+            break;
+        }
+    }
+
+    public Protocol.StateMessage getState() {
+        LocalPlayer player = minecraft.player;
+        if (player == null || minecraft.level == null) {
+            return null;
+        }
+
+        Protocol.StateMessage state = new Protocol.StateMessage();
+
+        // Player state
+        state.player = new Protocol.PlayerState();
+        state.player.x = player.getX();
+        state.player.y = player.getY();
+        state.player.z = player.getZ();
+        state.player.yaw = player.getYRot();
+        state.player.pitch = player.getXRot();
+        state.player.health = player.getHealth();
+        state.player.food = player.getFoodData().getFoodLevel();
+        state.player.experience_level = player.experienceLevel;
+        state.player.on_ground = player.onGround();
+        state.player.in_water = player.isInWater();
+        state.player.in_lava = player.isInLava();
+
+        // World state
+        state.world = new Protocol.WorldState();
+        state.world.dimension = minecraft.level.dimension().toString();
+        state.world.time = minecraft.level.getDayTime();
+        state.world.is_raining = minecraft.level.isRaining();
+        state.world.is_thundering = minecraft.level.isThundering();
+
+        return state;
+    }
+}

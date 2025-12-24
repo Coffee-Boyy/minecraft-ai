@@ -1,0 +1,258 @@
+spec_version: "mc-agent/0.1"
+name: "minecraft-qwen-agent"
+target_os: "Ubuntu 22.04+"
+minecraft:
+  edition: "Java"
+  loader: "Fabric"
+  version: "1.20.1"   # adjust if needed
+  mod_id: "mcagent_bridge"
+model:
+  family: "Qwen2.5-VL"
+  recommended: "Qwen2.5-VL-7B-Instruct"
+  serving: "vLLM"
+  device: "RTX 6000 Ada 48GB"
+  image_input:
+    resolution: "854x480"   # 480p
+    fps_target: 10          # capture frequency
+agent_loop:
+  decision_hz_target: 6     # expected 4-10 Hz if output is short
+  action_duration_ms_default: 150
+  max_new_tokens: 64
+  response_format: "strict_json"
+  safety:
+    kill_switch_key: "F10"
+    max_actions_per_minute: 1200
+
+architecture:
+  processes:
+    - name: "vllm_server"
+      role: "Serves Qwen2.5-VL over OpenAI-compatible API"
+    - name: "agent_service"
+      role: "Captures frames, calls VLM, produces actions, sends to Minecraft bridge"
+    - name: "mcagent_bridge_mod"
+      role: "Runs inside Minecraft client; receives actions and applies to player"
+    - name: "benchmark_runner"
+      role: "Measures end-to-end latency and effective decision Hz"
+
+repo_layout:
+  - path: "README.md"
+  - path: "docker/"
+    children:
+      - "docker-compose.yml"
+      - "vllm.Dockerfile"
+  - path: "agent/"
+    children:
+      - "pyproject.toml"
+      - "src/mcagent/__init__.py"
+      - "src/mcagent/config.py"
+      - "src/mcagent/capture.py"
+      - "src/mcagent/policy.py"
+      - "src/mcagent/protocol.py"
+      - "src/mcagent/bridge_client.py"
+      - "src/mcagent/loop.py"
+      - "src/mcagent/benchmark.py"
+      - "src/mcagent/cli.py"
+  - path: "minecraft-mod/"
+    children:
+      - "build.gradle"
+      - "gradle.properties"
+      - "settings.gradle"
+      - "src/main/resources/fabric.mod.json"
+      - "src/main/java/com/coffee/mcagent/BridgeMod.java"
+      - "src/main/java/com/coffee/mcagent/ws/WsServer.java"
+      - "src/main/java/com/coffee/mcagent/actions/ActionApplier.java"
+      - "src/main/java/com/coffee/mcagent/actions/ActionTypes.java"
+
+interfaces:
+
+  # 1) Model Server (OpenAI-compatible)
+  vllm_openai_api:
+    base_url: "http://127.0.0.1:8000/v1"
+    endpoint: "/chat/completions"
+    request:
+      model: "Qwen2.5-VL-7B-Instruct"
+      messages:
+        - role: "system"
+          content: |
+            You are a Minecraft control policy. You ONLY output strict JSON matching ActionSchema.
+            No extra keys. No prose.
+        - role: "user"
+          content:
+            - type: "text"
+              text: |
+                Given the screenshot, output the next action as JSON.
+                Current goal: {goal}.
+                Constraints: keep output <= 40 tokens if possible.
+            - type: "image_url"
+              image_url: {data_url_png}
+      max_tokens: 64
+      temperature: 0.2
+    response:
+      choices[0].message.content: "string containing JSON"
+
+  # 2) Minecraft Bridge (WebSocket inside client)
+  minecraft_bridge_ws:
+    url: "ws://127.0.0.1:8765/ws"
+    protocol: "json"
+    messages:
+      - name: "Hello"
+        direction: "client->agent and agent->client"
+        schema:
+          type: "object"
+          required: ["type","ts","payload"]
+          properties:
+            type: { const: "hello" }
+            ts: { type: "integer", description: "unix ms" }
+            payload:
+              type: "object"
+              required: ["version","capabilities"]
+              properties:
+                version: { type: "string" }
+                capabilities:
+                  type: "object"
+                  properties:
+                    supports_mouse: { type: "boolean" }
+                    supports_inventory: { type: "boolean" }
+                    supports_chat_cmd: { type: "boolean" }
+      - name: "Action"
+        direction: "agent->client"
+        schema: { $ref: "#/schemas/ActionEnvelope" }
+      - name: "Ack"
+        direction: "client->agent"
+        schema:
+          type: "object"
+          required: ["type","ts","payload"]
+          properties:
+            type: { const: "ack" }
+            ts: { type: "integer" }
+            payload:
+              type: "object"
+              required: ["action_id","applied","err"]
+              properties:
+                action_id: { type: "string" }
+                applied: { type: "boolean" }
+                err: { type: ["string","null"] }
+      - name: "State"
+        direction: "client->agent"
+        schema:
+          type: "object"
+          required: ["type","ts","payload"]
+          properties:
+            type: { const: "state" }
+            ts: { type: "integer" }
+            payload:
+              type: "object"
+              required: ["player","hud"]
+              properties:
+                player:
+                  type: "object"
+                  required: ["pos","yaw","pitch","on_ground"]
+                  properties:
+                    pos: { type: "array", items: {type:"number"}, minItems: 3, maxItems: 3 }
+                    yaw: { type: "number" }
+                    pitch: { type: "number" }
+                    on_ground: { type: "boolean" }
+                hud:
+                  type: "object"
+                  required: ["health","hunger","selected_slot"]
+                  properties:
+                    health: { type: "number" }
+                    hunger: { type: "number" }
+                    selected_slot: { type: "integer" }
+
+schemas:
+  ActionEnvelope:
+    type: "object"
+    required: ["type","ts","payload"]
+    properties:
+      type: { const: "action" }
+      ts: { type: "integer" }
+      payload:
+        type: "object"
+        required: ["id","duration_ms","keys","mouse","click","hotbar"]
+        properties:
+          id: { type: "string" }
+          duration_ms: { type: "integer", minimum: 20, maximum: 2000 }
+          keys:
+            type: "object"
+            required: ["down","up"]
+            properties:
+              down: { type: "array", items: { $ref: "#/schemas/Key" } }
+              up: { type: "array", items: { $ref: "#/schemas/Key" } }
+          mouse:
+            type: "object"
+            required: ["yaw_delta_deg","pitch_delta_deg"]
+            properties:
+              yaw_delta_deg: { type: "number", minimum: -12, maximum: 12 }
+              pitch_delta_deg: { type: "number", minimum: -12, maximum: 12 }
+          click:
+            oneOf:
+              - { type: "string", enum: ["NONE","LMB","RMB","MMB"] }
+          hotbar:
+            type: "integer"
+            minimum: 0
+            maximum: 9
+            description: "0 means no change; 1-9 selects slot"
+  Key:
+    type: "string"
+    enum: ["W","A","S","D","SPACE","SHIFT","CTRL","E","Q","F","ESC","SPRINT"]
+
+requirements:
+  python:
+    version: ">=3.11"
+    deps:
+      - "opencv-python"
+      - "mss"
+      - "numpy"
+      - "websockets"
+      - "pydantic"
+      - "typer"
+      - "rich"
+      - "httpx"
+  minecraft_mod:
+    deps:
+      - "Fabric API"
+      - "Java 17"
+      - "minimal websocket server implementation"  # e.g., Java-WebSocket or netty WS
+
+vllm_setup:
+  method: "docker"
+  docker_image: "vllm/vllm-openai:latest"
+  command_template: >
+    python -m vllm.entrypoints.openai.api_server
+    --model {MODEL_PATH_OR_HF_ID}
+    --host 0.0.0.0 --port 8000
+    --max-model-len 4096
+    --gpu-memory-utilization 0.92
+    --dtype auto
+    --enforce-eager false
+
+agent_config:
+  env_vars:
+    VLLM_BASE_URL: "http://127.0.0.1:8000/v1"
+    VLLM_MODEL: "Qwen2.5-VL-7B-Instruct"
+    BRIDGE_WS_URL: "ws://127.0.0.1:8765/ws"
+    CAPTURE_MODE: "screen"
+    CAPTURE_FPS: "10"
+    DECISION_HZ: "6"
+    MAX_NEW_TOKENS: "64"
+    OUTPUT_STRICT_JSON: "1"
+
+benchmark:
+  measures:
+    - "t_capture_ms"
+    - "t_vlm_ms"
+    - "t_ws_send_ms"
+    - "t_ack_ms"
+    - "end_to_end_ms"
+    - "effective_hz"
+  outputs:
+    - "console summary"
+    - "jsonl log at agent/logs/bench.jsonl"
+
+acceptance_criteria:
+  - "Agent connects to WS bridge and receives hello + periodic state."
+  - "Agent captures 480p frames and sends to VLM."
+  - "VLM response parses as ActionEnvelope payload (strict JSON)."
+  - "Minecraft client applies movement+look+click actions and acks them."
+  - "Benchmark shows stable end-to-end < 250ms at least 3 Hz OR < 400ms at least 2 Hz (depending on model/output)."

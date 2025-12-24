@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=70.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcagent"
+version = "0.1.0"
+description = "Minecraft AI agent using Qwen2.5-VL"
+dependencies = [
+    "opencv-python>=4.8.0",
+    "mss>=9.0.0",
+    "numpy==1.22.0",
+    "websockets>=12.0",
+    "pydantic>=2.5.0",
+    "typer>=0.9.0",
+    "rich>=13.7.0",
+    "httpx>=0.25.0",
+    "Pillow>=10.0.0",
+    "pyscreenshot>=3.1",
+    "python-xlib>=0.33; sys_platform == 'linux'",
+    "pywinctl>=0.3; sys_platform == 'linux'",
+]
+
+[project.scripts]
+mcagent = "mcagent.cli:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "black>=23.12.0",
+    "ruff>=0.1.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
