@@ -12,7 +12,7 @@ class Config:
     vllm_base_url: str
     vllm_model: str
     bridge_ws_url: str
-    capture_mode: Literal["screen", "window"]
+    capture_mode: Literal["screen", "window", "mod"]
     capture_window_title: str
     capture_fps: int
     decision_hz: int
@@ -22,6 +22,7 @@ class Config:
     kill_switch_key: str
     max_actions_per_minute: int
     capture_resolution: tuple[int, int]
+    jpeg_quality: float
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -30,7 +31,7 @@ class Config:
             vllm_base_url=os.getenv("VLLM_BASE_URL", "http://127.0.0.1:8000/v1"),
             vllm_model=os.getenv("VLLM_MODEL", "Qwen2.5-VL-7B-Instruct"),
             bridge_ws_url=os.getenv("BRIDGE_WS_URL", "ws://127.0.0.1:8765/ws"),
-            capture_mode=os.getenv("CAPTURE_MODE", "window"),  # type: ignore
+            capture_mode=os.getenv("CAPTURE_MODE", "mod"),  # type: ignore
             capture_window_title=os.getenv("CAPTURE_WINDOW_TITLE", "Minecraft"),
             capture_fps=int(os.getenv("CAPTURE_FPS", "10")),
             decision_hz=int(os.getenv("DECISION_HZ", "6")),
@@ -40,6 +41,7 @@ class Config:
             kill_switch_key=os.getenv("KILL_SWITCH_KEY", "F10"),
             max_actions_per_minute=int(os.getenv("MAX_ACTIONS_PER_MINUTE", "1200")),
             capture_resolution=(854, 480),  # 480p as per spec
+            jpeg_quality=float(os.getenv("JPEG_QUALITY", "0.75")),
         )
 
     def __str__(self) -> str:

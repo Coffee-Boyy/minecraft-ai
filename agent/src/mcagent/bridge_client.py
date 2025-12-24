@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import struct
 import time
 from typing import Optional, Callable
 
@@ -16,6 +17,9 @@ from .protocol import (
     StateMessage,
 )
 
+# Binary message types from mod
+MSG_TYPE_FRAME = 0x01
+
 
 class BridgeClient:
     """WebSocket client for the Minecraft bridge."""
@@ -29,7 +33,13 @@ class BridgeClient:
         self.latest_state: Optional[StateMessage] = None
         self._on_state_callback: Optional[Callable[[StateMessage], None]] = None
         self._on_ack_callback: Optional[Callable[[AckMessage], None]] = None
+        self._on_frame_callback: Optional[Callable[[bytes, int, int], None]] = None
         self._last_send_time = 0.0
+
+        # Frame state
+        self.latest_frame: Optional[bytes] = None
+        self.latest_frame_seq: int = 0
+        self.latest_frame_ts: int = 0
 
     async def connect(self) -> bool:
         """
@@ -108,12 +118,33 @@ class BridgeClient:
 
         try:
             async for message in self.ws:
-                await self._handle_message(message)
+                if isinstance(message, bytes):
+                    self._handle_binary_message(message)
+                else:
+                    await self._handle_message(message)
         except websockets.exceptions.ConnectionClosed:
             self.connected = False
         except Exception as e:
             print(f"Error receiving messages: {e}")
             self.connected = False
+
+    def _handle_binary_message(self, data: bytes):
+        """Handle a binary WebSocket message (frames)."""
+        if len(data) < 9:
+            return
+
+        msg_type = data[0]
+        if msg_type == MSG_TYPE_FRAME:
+            # Parse header: type(1) + seq(4) + ts(4) + jpeg_data
+            seq, ts = struct.unpack(">II", data[1:9])
+            frame_data = data[9:]
+
+            self.latest_frame = frame_data
+            self.latest_frame_seq = seq
+            self.latest_frame_ts = ts
+
+            if self._on_frame_callback:
+                self._on_frame_callback(frame_data, seq, ts)
 
     async def _handle_message(self, message: str):
         """Handle an incoming message from the bridge."""
@@ -142,6 +173,46 @@ class BridgeClient:
     def set_ack_callback(self, callback: Callable[[AckMessage], None]):
         """Set callback for acknowledgments."""
         self._on_ack_callback = callback
+
+    def set_frame_callback(self, callback: Callable[[bytes, int, int], None]):
+        """
+        Set callback for frame updates.
+
+        Args:
+            callback: Function receiving (frame_data: bytes, sequence: int, timestamp: int)
+        """
+        self._on_frame_callback = callback
+
+    async def configure_frames(
+        self,
+        enabled: bool = True,
+        width: int = 854,
+        height: int = 480,
+        capture_every_n_frames: int = 1,
+        jpeg_quality: float = 0.75,
+    ):
+        """
+        Configure frame capture settings on the mod.
+
+        Args:
+            enabled: Whether frame capture is enabled
+            width: Target frame width
+            height: Target frame height
+            capture_every_n_frames: Capture every N frames (1 = every frame, 2 = every other)
+            jpeg_quality: JPEG compression quality (0.0 to 1.0)
+        """
+        if not self.connected or not self.ws:
+            return
+
+        config = {
+            "type": "frame_config",
+            "enabled": enabled,
+            "width": width,
+            "height": height,
+            "captureEveryNFrames": capture_every_n_frames,
+            "jpegQuality": jpeg_quality,
+        }
+        await self.ws.send(json.dumps(config))
 
     def get_last_send_time_ms(self) -> float:
         """Get the time taken for the last send in milliseconds."""

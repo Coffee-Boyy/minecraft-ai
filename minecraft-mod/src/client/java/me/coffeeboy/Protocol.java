@@ -75,4 +75,25 @@ public class Protocol {
             return GSON.toJson(this);
         }
     }
+
+    /**
+     * Configuration message for frame capture settings.
+     * Received from Python client to configure capture parameters.
+     */
+    public static class FrameConfigMessage {
+        public String type = "frame_config";
+        public boolean enabled = true;
+        public int width = 854;
+        public int height = 480;
+        public int captureEveryNFrames = 1;  // 1 = every frame, 2 = every other, etc.
+        public float jpegQuality = 0.75f;    // 0.0 to 1.0
+
+        public static FrameConfigMessage fromJson(String json) {
+            return GSON.fromJson(json, FrameConfigMessage.class);
+        }
+
+        public String toJson() {
+            return GSON.toJson(this);
+        }
+    }
 }

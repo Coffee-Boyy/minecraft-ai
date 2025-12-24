@@ -7,6 +7,7 @@ import net.minecraft.client.Minecraft;
 public class MinecraftAIClient implements ClientModInitializer {
 	private static WsServer wsServer;
 	private static ActionApplier actionApplier;
+	private static FrameCapture frameCapture;
 
 	@Override
 	public void onInitializeClient() {
@@ -23,6 +24,24 @@ public class MinecraftAIClient implements ClientModInitializer {
 		} catch (Exception e) {
 			MinecraftAI.LOGGER.error("Failed to start WebSocket server: " + e.getMessage());
 		}
+
+		// Initialize frame capture
+		frameCapture = new FrameCapture();
+		frameCapture.setFrameCallback(frameData -> {
+			if (wsServer != null) {
+				wsServer.sendFrame(frameData);
+			}
+		});
+		frameCapture.register();
+		wsServer.setFrameCapture(frameCapture);
+		MinecraftAI.LOGGER.info("Frame capture initialized (disabled by default, enable via frame_config message)");
+
+		// Register shutdown hook for cleanup
+		Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+			if (frameCapture != null) {
+				frameCapture.shutdown();
+			}
+		}, "FrameCapture-Shutdown"));
 
 		// Register tick events
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
