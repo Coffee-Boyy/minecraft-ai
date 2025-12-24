@@ -22,13 +22,13 @@ echo "✓ Python $python_version"
 echo "Checking Java version..."
 if command -v java &> /dev/null; then
     java_version=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d. -f1)
-    if [ "$java_version" -ge 17 ]; then
+    if [ "$java_version" -ge 21 ]; then
         echo "✓ Java $java_version"
     else
-        echo "⚠ Java 17+ recommended for Minecraft mod, found version $java_version"
+        echo "⚠ Java 21+ recommended for Minecraft mod, found version $java_version"
     fi
 else
-    echo "⚠ Java not found. Install Java 17+ to build the Minecraft mod"
+    echo "⚠ Java not found. Install Java 21+ to build the Minecraft mod"
 fi
 
 # Check Docker

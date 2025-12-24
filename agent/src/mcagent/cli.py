@@ -92,22 +92,124 @@ def test_capture(
         "-d",
         help="Duration to capture frames in seconds",
     ),
+    save_screenshots: bool = typer.Option(
+        True,
+        "--save-screenshots/--no-save-screenshots",
+        help="Save screenshots to disk",
+    ),
 ):
     """
     Test screen capture without running the agent.
 
     Useful for verifying that screen capture works correctly.
+    Screenshots are saved to agent/logs/screenshots/ by default.
     """
-    from .capture import ScreenCapture
-    import time
-
     config = Config.from_env()
 
     console.print("[bold cyan]Testing Screen Capture[/bold cyan]")
     console.print("=" * 50)
+    console.print(f"Capture mode: {config.capture_mode}")
     console.print(f"Duration: {duration} seconds")
     console.print(f"Target FPS: {config.capture_fps}")
-    console.print(f"Resolution: {config.capture_resolution[0]}x{config.capture_resolution[1]}\n")
+    console.print(f"Resolution: {config.capture_resolution[0]}x{config.capture_resolution[1]}")
+    console.print(f"Save screenshots: {save_screenshots}\n")
+
+    if config.capture_mode == "mod":
+        # Use mod frame capture via WebSocket
+        asyncio.run(_test_mod_capture(config, duration, save_screenshots))
+    else:
+        # Use screen/window capture
+        _test_screen_capture(config, duration, save_screenshots)
+
+
+async def _test_mod_capture(config: Config, duration: int, save_screenshots: bool):
+    """Test frame capture from the Minecraft mod via WebSocket."""
+    from .bridge_client import BridgeClient
+    import time
+    from pathlib import Path
+
+    # Create screenshots directory if saving
+    screenshots_dir = None
+    if save_screenshots:
+        screenshots_dir = Path(__file__).parent.parent.parent / "logs" / "screenshots"
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+        console.print(f"Saving screenshots to: {screenshots_dir}\n")
+
+    frame_count = 0
+    start_time = time.time()
+
+    def on_frame(frame_data: bytes, seq: int, ts: int):
+        nonlocal frame_count
+        frame_count += 1
+
+        # Save screenshot if enabled
+        if save_screenshots and screenshots_dir:
+            screenshot_path = screenshots_dir / f"frame_{frame_count:05d}.jpg"
+            with open(screenshot_path, "wb") as f:
+                f.write(frame_data)
+
+        if frame_count % config.capture_fps == 0:
+            elapsed = time.time() - start_time
+            actual_fps = frame_count / elapsed
+            console.print(
+                f"Received {frame_count} frames in {elapsed:.1f}s "
+                f"(avg {actual_fps:.1f} FPS, seq={seq})"
+            )
+
+    async with BridgeClient(config.bridge_ws_url) as bridge:
+        try:
+            await bridge.connect()
+            console.print("[green]Connected to Minecraft bridge[/green]")
+
+            # Configure frame capture
+            await bridge.configure_frames(
+                enabled=True,
+                width=config.capture_resolution[0],
+                height=config.capture_resolution[1],
+                capture_every_n_frames=1,
+                jpeg_quality=config.jpeg_quality,
+            )
+            console.print("[green]Frame capture configured[/green]\n")
+
+            # Set frame callback
+            bridge.set_frame_callback(on_frame)
+
+            # Start receiving messages
+            receive_task = asyncio.create_task(bridge.receive_messages())
+
+            # Wait for duration
+            await asyncio.sleep(duration)
+
+            # Stop receiving
+            receive_task.cancel()
+
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+            return
+
+    total_time = time.time() - start_time
+    avg_fps = frame_count / total_time if total_time > 0 else 0
+
+    console.print(f"\n[green]Test complete![/green]")
+    console.print(f"Total frames: {frame_count}")
+    console.print(f"Average FPS: {avg_fps:.2f}")
+    if save_screenshots and screenshots_dir:
+        console.print(f"Screenshots saved to: {screenshots_dir}")
+
+
+def _test_screen_capture(config: Config, duration: int, save_screenshots: bool):
+    """Test screen/window capture."""
+    from .capture import ScreenCapture
+    import time
+    import cv2
+    from pathlib import Path
+
+    # Create screenshots directory if saving
+    screenshots_dir = None
+    if save_screenshots:
+        screenshots_dir = Path(__file__).parent.parent.parent / "logs" / "screenshots"
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+        console.print(f"Saving screenshots to: {screenshots_dir}\n")
 
     with ScreenCapture(
         mode=config.capture_mode,
@@ -123,6 +225,11 @@ def test_capture(
 
             frame = capture.capture_frame()
             frame_count += 1
+
+            # Save screenshot if enabled
+            if save_screenshots and screenshots_dir:
+                screenshot_path = screenshots_dir / f"frame_{frame_count:05d}.png"
+                cv2.imwrite(str(screenshot_path), frame)
 
             if frame_count % config.capture_fps == 0:
                 elapsed = time.time() - start_time
@@ -144,6 +251,8 @@ def test_capture(
     console.print(f"\n[green]Test complete![/green]")
     console.print(f"Total frames: {frame_count}")
     console.print(f"Average FPS: {avg_fps:.2f}")
+    if save_screenshots and screenshots_dir:
+        console.print(f"Screenshots saved to: {screenshots_dir}")
 
 
 @app.command()

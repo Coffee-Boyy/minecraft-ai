@@ -1,6 +1,5 @@
 """WebSocket client for communicating with the Minecraft bridge mod."""
 
-import asyncio
 import json
 import struct
 import time
@@ -12,7 +11,6 @@ from websockets.client import WebSocketClientProtocol
 from .protocol import (
     ActionEnvelope,
     ActionPayload,
-    HelloMessage,
     AckMessage,
     StateMessage,
 )
@@ -52,25 +50,12 @@ class BridgeClient:
             self.ws = await websockets.connect(self.ws_url)
             self.connected = True
 
-            # Send hello message
-            hello = HelloMessage(
-                type="hello",
-                ts=self._get_timestamp_ms(),
-                payload={
-                    "version": "0.1.0",
-                    "capabilities": {
-                        "supports_mouse": True,
-                        "supports_inventory": True,
-                        "supports_chat_cmd": False,
-                    },
-                },
-            )
-            await self.ws.send(hello.model_dump_json())
-
-            # Wait for hello response
-            response = await asyncio.wait_for(self.ws.recv(), timeout=5.0)
-            hello_msg = HelloMessage.model_validate_json(response)
-            self.capabilities = hello_msg.payload.capabilities.model_dump()
+            # Set default capabilities (the mod doesn't implement hello protocol)
+            self.capabilities = {
+                "supports_mouse": False,
+                "supports_inventory": False,
+                "supports_chat_cmd": False,
+            }
 
             return True
 
@@ -116,28 +101,35 @@ class BridgeClient:
         if not self.ws:
             return
 
+        print("[DEBUG] Starting to receive messages...")
         try:
             async for message in self.ws:
                 if isinstance(message, bytes):
                     self._handle_binary_message(message)
                 else:
+                    print(f"[DEBUG] Received text message: {message[:200]}")
                     await self._handle_message(message)
         except websockets.exceptions.ConnectionClosed:
+            print("[DEBUG] WebSocket connection closed")
             self.connected = False
         except Exception as e:
-            print(f"Error receiving messages: {e}")
+            print(f"[DEBUG] Error receiving messages: {e}")
             self.connected = False
 
     def _handle_binary_message(self, data: bytes):
         """Handle a binary WebSocket message (frames)."""
         if len(data) < 9:
+            print(f"[DEBUG] Received binary message too short: {len(data)} bytes")
             return
 
         msg_type = data[0]
+        print(f"[DEBUG] Received binary message: type={msg_type}, len={len(data)}")
         if msg_type == MSG_TYPE_FRAME:
             # Parse header: type(1) + seq(4) + ts(4) + jpeg_data
             seq, ts = struct.unpack(">II", data[1:9])
             frame_data = data[9:]
+
+            print(f"[DEBUG] Frame received: seq={seq}, ts={ts}, data_len={len(frame_data)}")
 
             self.latest_frame = frame_data
             self.latest_frame_seq = seq
@@ -212,7 +204,9 @@ class BridgeClient:
             "captureEveryNFrames": capture_every_n_frames,
             "jpegQuality": jpeg_quality,
         }
-        await self.ws.send(json.dumps(config))
+        config_json = json.dumps(config)
+        print(f"[DEBUG] Sending frame config: {config_json}")
+        await self.ws.send(config_json)
 
     def get_last_send_time_ms(self) -> float:
         """Get the time taken for the last send in milliseconds."""
@@ -229,7 +223,7 @@ class BridgeClient:
         """Get current timestamp in milliseconds."""
         return int(time.time() * 1000)
 
-    def __aenter__(self):
+    async def __aenter__(self):
         """Async context manager entry."""
         return self
 

@@ -104,35 +104,36 @@ class AckMessage(BaseModel):
 
 
 class PlayerState(BaseModel):
-    """Player state information."""
+    """Player state information from Java bridge."""
 
-    pos: tuple[float, float, float]
+    x: float
+    y: float
+    z: float
     yaw: float
     pitch: float
-    on_ground: bool
-
-
-class HudState(BaseModel):
-    """HUD state information."""
-
     health: float
-    hunger: float
-    selected_slot: int
+    food: float
+    experience_level: int
+    on_ground: bool
+    in_water: bool
+    in_lava: bool
 
 
-class StatePayload(BaseModel):
-    """State update payload."""
+class WorldState(BaseModel):
+    """World state information from Java bridge."""
 
-    player: PlayerState
-    hud: HudState
+    dimension: str
+    time: int
+    is_raining: bool
+    is_thundering: bool
 
 
 class StateMessage(BaseModel):
-    """State update message."""
+    """State update message from Java bridge."""
 
     type: Literal["state"] = "state"
-    ts: int
-    payload: StatePayload
+    player: PlayerState
+    world: WorldState
 
 
 # Union type for all message types

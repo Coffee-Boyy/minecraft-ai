@@ -37,21 +37,34 @@ public class WsServer extends WebSocketServer {
 
     @Override
     public void onMessage(WebSocket conn, String message) {
+        MinecraftAI.LOGGER.info("Received message: {}", message.substring(0, Math.min(200, message.length())));
+
         try {
-            // Check for frame_config message
-            if (message.contains("\"type\":\"frame_config\"")) {
+            // Check for frame_config message (handle with or without space after colon)
+            boolean isFrameConfig = message.contains("\"type\":\"frame_config\"") ||
+                                    message.contains("\"type\": \"frame_config\"");
+            MinecraftAI.LOGGER.info("Is frame_config? {}", isFrameConfig);
+
+            if (isFrameConfig) {
+                MinecraftAI.LOGGER.info("Processing frame_config message");
                 Protocol.FrameConfigMessage config = Protocol.FrameConfigMessage.fromJson(message);
+                MinecraftAI.LOGGER.info("Parsed config: enabled={}, {}x{}, every {} frames, quality={}",
+                    config.enabled, config.width, config.height, config.captureEveryNFrames, config.jpegQuality);
+
                 if (frameCapture != null) {
+                    MinecraftAI.LOGGER.info("Configuring frame capture...");
                     frameCapture.setEnabled(config.enabled);
                     frameCapture.setResolution(config.width, config.height);
                     frameCapture.setCaptureRate(config.captureEveryNFrames);
                     frameCapture.setJpegQuality(config.jpegQuality);
-                    MinecraftAI.LOGGER.info("Frame capture configured: {}x{} @ 1/{} frames, quality={}",
-                        config.width, config.height, config.captureEveryNFrames, config.jpegQuality);
+                    MinecraftAI.LOGGER.info("Frame capture configured successfully");
+                } else {
+                    MinecraftAI.LOGGER.warn("frameCapture is null!");
                 }
                 return;
             }
 
+            MinecraftAI.LOGGER.info("Not a frame_config, parsing as action message");
             // Parse action message
             Protocol.ActionMessage action = Protocol.ActionMessage.fromJson(message);
 
@@ -111,11 +124,15 @@ public class WsServer extends WebSocketServer {
      */
     public void sendFrame(byte[] frameData) {
         if (connections.isEmpty()) {
+            MinecraftAI.LOGGER.debug("No connections, skipping frame send");
             return;
         }
 
         int seq = frameSequence.incrementAndGet();
         int timestamp = (int) (System.currentTimeMillis() & 0xFFFFFFFFL);
+
+        MinecraftAI.LOGGER.info("Sending frame: seq={}, timestamp={}, dataLen={} to {} clients",
+            seq, timestamp, frameData.length, connections.size());
 
         // Create binary message: type(1) + seq(4) + ts(4) + data
         ByteBuffer buffer = ByteBuffer.allocate(9 + frameData.length);
@@ -128,6 +145,7 @@ public class WsServer extends WebSocketServer {
         for (WebSocket conn : connections.keySet()) {
             try {
                 conn.send(buffer.duplicate());
+                MinecraftAI.LOGGER.info("Frame sent to client: {}", conn.getRemoteSocketAddress());
             } catch (Exception e) {
                 MinecraftAI.LOGGER.warn("Failed to send frame to client: {}", e.getMessage());
             }
