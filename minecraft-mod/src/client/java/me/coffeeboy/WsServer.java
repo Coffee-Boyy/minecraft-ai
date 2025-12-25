@@ -70,19 +70,23 @@ public class WsServer extends WebSocketServer {
 
             // Apply action via ActionApplier
             actionApplier.applyAction(action, ack -> {
-                // Send acknowledgment back to client
-                conn.send(ack.toJson());
+                // Send acknowledgment back to client (only if still connected)
+                if (conn.isOpen()) {
+                    conn.send(ack.toJson());
+                }
             });
 
         } catch (Exception e) {
             MinecraftAI.LOGGER.error("Error processing message: " + e.getMessage());
 
-            // Send error acknowledgment
-            Protocol.AckMessage ack = new Protocol.AckMessage();
-            ack.action_type = "unknown";
-            ack.success = false;
-            ack.error = e.getMessage();
-            conn.send(ack.toJson());
+            // Send error acknowledgment (only if still connected)
+            if (conn.isOpen()) {
+                Protocol.AckMessage ack = new Protocol.AckMessage();
+                ack.action_type = "unknown";
+                ack.success = false;
+                ack.error = e.getMessage();
+                conn.send(ack.toJson());
+            }
         }
     }
 
@@ -99,7 +103,9 @@ public class WsServer extends WebSocketServer {
 
     public void broadcast(String message) {
         for (WebSocket conn : connections.keySet()) {
-            conn.send(message);
+            if (conn.isOpen()) {
+                conn.send(message);
+            }
         }
     }
 

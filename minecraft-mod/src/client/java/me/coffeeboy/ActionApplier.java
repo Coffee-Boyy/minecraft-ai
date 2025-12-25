@@ -1,8 +1,8 @@
 package me.coffeeboy;
 
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.world.phys.Vec2;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Consumer;
@@ -10,6 +10,16 @@ import java.util.function.Consumer;
 public class ActionApplier {
     private final Minecraft minecraft;
     private final ConcurrentLinkedQueue<PendingAction> actionQueue = new ConcurrentLinkedQueue<>();
+
+    // References to movement key bindings (lazily initialized)
+    private KeyMapping keyForward;
+    private KeyMapping keyBack;
+    private KeyMapping keyLeft;
+    private KeyMapping keyRight;
+    private KeyMapping keyJump;
+    private KeyMapping keySneak;
+    private KeyMapping keySprint;
+    private boolean keysInitialized = false;
 
     private static class PendingAction {
         Protocol.ActionMessage action;
@@ -29,6 +39,19 @@ public class ActionApplier {
         this.minecraft = minecraft;
     }
 
+    private void ensureKeysInitialized() {
+        if (!keysInitialized && minecraft.options != null) {
+            this.keyForward = minecraft.options.keyUp;
+            this.keyBack = minecraft.options.keyDown;
+            this.keyLeft = minecraft.options.keyLeft;
+            this.keyRight = minecraft.options.keyRight;
+            this.keyJump = minecraft.options.keyJump;
+            this.keySneak = minecraft.options.keyShift;
+            this.keySprint = minecraft.options.keySprint;
+            this.keysInitialized = true;
+        }
+    }
+
     public void applyAction(Protocol.ActionMessage action, Consumer<Protocol.AckMessage> callback) {
         // Add to queue for processing on game thread
         actionQueue.offer(new PendingAction(action, callback));
@@ -37,6 +60,12 @@ public class ActionApplier {
     public void tick() {
         LocalPlayer player = minecraft.player;
         if (player == null) {
+            return;
+        }
+
+        // Lazily initialize key bindings once options are available
+        ensureKeysInitialized();
+        if (!keysInitialized) {
             return;
         }
 
@@ -58,12 +87,14 @@ public class ActionApplier {
                 ack.success = true;
                 pending.callback.accept(ack);
 
-                // Reset inputs
-                player.input.forwardImpulse = 0;
-                player.input.leftImpulse = 0;
-                player.input.jumping = false;
-                player.input.shiftKeyDown = false;
-                player.setSprinting(false);
+                // Reset inputs by releasing all simulated key presses
+                keyForward.setDown(false);
+                keyBack.setDown(false);
+                keyLeft.setDown(false);
+                keyRight.setDown(false);
+                keyJump.setDown(false);
+                keySneak.setDown(false);
+                keySprint.setDown(false);
 
                 continue;
             }
@@ -71,11 +102,11 @@ public class ActionApplier {
             // Apply the action for this tick
             Protocol.ActionMessage action = pending.action;
 
-            // Movement
-            if (action.forward != 0 || action.strafe != 0) {
-                player.input.forwardImpulse = action.forward;
-                player.input.leftImpulse = action.strafe;
-            }
+            // Movement - simulate key presses via KeyMapping.setDown()
+            keyForward.setDown(action.forward > 0);
+            keyBack.setDown(action.forward < 0);
+            keyLeft.setDown(action.strafe > 0);
+            keyRight.setDown(action.strafe < 0);
 
             // Look
             if (action.yaw != 0 || action.pitch != 0) {
@@ -88,9 +119,7 @@ public class ActionApplier {
             }
 
             // Jump
-            if (action.jump) {
-                player.input.jumping = true;
-            }
+            keyJump.setDown(action.jump);
 
             // Attack (left click)
             if (action.attack && minecraft.gameMode != null) {
@@ -109,14 +138,10 @@ public class ActionApplier {
             }
 
             // Sneak
-            if (action.sneak) {
-                player.input.shiftKeyDown = true;
-            }
+            keySneak.setDown(action.sneak);
 
             // Sprint
-            if (action.sprint) {
-                player.setSprinting(true);
-            }
+            keySprint.setDown(action.sprint);
 
             // Only process the first action in queue per tick
             break;

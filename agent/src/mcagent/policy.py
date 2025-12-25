@@ -2,6 +2,7 @@
 
 import json
 import time
+import traceback
 from typing import Optional
 
 import httpx
@@ -11,7 +12,7 @@ from .protocol import ActionMessage
 
 
 # JSON schema for the action format expected from the LLM
-ACTION_SCHEMA = """{
+ACTION_SCHEMA_DESCRIPTION = """{
   "forward": float (-1.0 to 1.0, negative=backward),
   "strafe": float (-1.0 to 1.0, negative=left, positive=right),
   "yaw": float (absolute yaw in degrees, 0=south, 90=west, 180=north, -90=east),
@@ -23,6 +24,55 @@ ACTION_SCHEMA = """{
   "sprint": bool,
   "duration_ms": int (20-2000, how long to hold this action)
 }"""
+
+# Formal JSON schema for structured output
+ACTION_JSON_SCHEMA = {
+    "name": "minecraft_action",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "forward": {
+                "type": "number",
+                "description": "Movement forward/backward (-1.0 to 1.0, negative=backward)",
+            },
+            "strafe": {
+                "type": "number",
+                "description": "Movement left/right (-1.0 to 1.0, negative=left, positive=right)",
+            },
+            "yaw": {
+                "type": "number",
+                "description": "Absolute yaw in degrees (0=south, 90=west, 180=north, -90=east)",
+            },
+            "pitch": {
+                "type": "number",
+                "description": "Absolute pitch in degrees (-90=up, 0=straight, 90=down)",
+            },
+            "jump": {"type": "boolean", "description": "Whether to jump"},
+            "attack": {"type": "boolean", "description": "Left click (break blocks or hit entities)"},
+            "use": {"type": "boolean", "description": "Right click (place blocks or interact)"},
+            "sneak": {"type": "boolean", "description": "Whether to sneak"},
+            "sprint": {"type": "boolean", "description": "Whether to sprint"},
+            "duration_ms": {
+                "type": "integer",
+                "description": "How long to hold this action (20-2000ms)",
+            },
+        },
+        "required": [
+            "forward",
+            "strafe",
+            "yaw",
+            "pitch",
+            "jump",
+            "attack",
+            "use",
+            "sneak",
+            "sprint",
+            "duration_ms",
+        ],
+        "additionalProperties": False,
+    },
+}
 
 
 class VLMPolicy:
@@ -39,7 +89,7 @@ class VLMPolicy:
         self.system_prompt = f"""You are a Minecraft control policy. Given a screenshot and goal, output ONLY a JSON action.
 
 Action schema:
-{ACTION_SCHEMA}
+{ACTION_SCHEMA_DESCRIPTION}
 
 Rules:
 - Output ONLY valid JSON, no explanation or markdown
@@ -85,11 +135,14 @@ Rules:
                 },
             ],
             "max_tokens": self.config.max_new_tokens,
-            "temperature": 0.2,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": ACTION_JSON_SCHEMA,
+            },
         }
 
-        # Call the VLM API
         try:
+            # print(f"[Policy] Request: {json.dumps(payload)}")
             response = self.client.post(
                 f"{self.config.vllm_base_url}/chat/completions",
                 json=payload,
@@ -99,6 +152,7 @@ Rules:
 
             # Extract the content
             content = result["choices"][0]["message"]["content"]
+            print(f"[Policy] VLM response content: {content}")
 
             # Parse the JSON action
             action_dict = self._parse_action_json(content)
@@ -107,9 +161,18 @@ Rules:
             self._last_inference_time = time.perf_counter() - start
             return action
 
+        except httpx.HTTPStatusError as e:
+            self._last_inference_time = time.perf_counter() - start
+            print(f"[Policy] HTTP error: {e}")
+            print(f"[Policy] Response body: {e.response.text}")
+            traceback.print_exc()
+            # Return a safe default action (do nothing)
+            return self._get_default_action()
+
         except Exception as e:
             self._last_inference_time = time.perf_counter() - start
             print(f"[Policy] Error: {e}")
+            traceback.print_exc()
             # Return a safe default action (do nothing)
             return self._get_default_action()
 
