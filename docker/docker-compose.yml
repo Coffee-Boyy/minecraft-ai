@@ -10,7 +10,7 @@ services:
     ports:
       - "9000:9000"
     environment:
-      - MODEL_NAME=Qwen/Qwen2.5-VL-7B-Instruct
+      - MODEL_NAME=HuggingFaceTB/SmolVLM-Instruct
       - MAX_MODEL_LEN=4096
       - GPU_MEMORY_UTIL=0.92
       - HOST=0.0.0.0

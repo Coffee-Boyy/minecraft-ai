@@ -93,8 +93,8 @@ Located in `minecraft-mod/`:
 Environment variables (set in `.env` or export):
 
 ```bash
-VLLM_BASE_URL=http://127.0.0.1:8000/v1
-VLLM_MODEL=Qwen2.5-VL-7B-Instruct
+LLM_BASE_URL=http://127.0.0.1:8000/v1
+LLM_MODEL=Qwen2.5-VL-7B-Instruct
 BRIDGE_WS_URL=ws://127.0.0.1:8765/ws
 CAPTURE_MODE=window              # 'window' to capture Minecraft window only, 'screen' for full screen
 CAPTURE_WINDOW_TITLE=Minecraft   # Window title to search for (case-insensitive substring match)

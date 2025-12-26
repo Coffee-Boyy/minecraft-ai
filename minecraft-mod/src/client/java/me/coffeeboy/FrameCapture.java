@@ -15,7 +15,6 @@ import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -27,10 +26,10 @@ import java.util.function.Consumer;
  */
 public class FrameCapture {
     // Configuration
-    private volatile int targetWidth = 854;
-    private volatile int targetHeight = 480;
-    private volatile int captureEveryNFrames = 1;
-    private volatile float jpegQuality = 0.75f;
+    private volatile int targetWidth = 384;
+    private volatile int targetHeight = 216;
+    private volatile int captureEveryNFrames = 20;
+    private volatile float jpegQuality = 0.5f;
     private volatile boolean enabled = false;
 
     // State

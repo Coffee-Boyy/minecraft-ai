@@ -1,14 +1,21 @@
 """VLM policy for generating Minecraft actions from screenshots."""
 
+import base64
 import json
 import time
 import traceback
+from collections import deque
+from pathlib import Path
 from typing import Optional
 
 import httpx
 
 from .config import Config
 from .protocol import ActionMessage
+
+
+# Directory for debug frame captures
+DEBUG_FRAMES_DIR = Path("./") / "mcagent_frames"
 
 
 # JSON schema for the action format expected from the LLM
@@ -86,7 +93,7 @@ class VLMPolicy:
         """Initialize the VLM policy."""
         self.config = config
         self.client = httpx.Client(timeout=30.0)
-        self.system_prompt = f"""You are a Minecraft control policy. Given a screenshot and goal, output ONLY a JSON action.
+        self.system_prompt = f"""You are a Minecraft control policy. Given a screenshot of the current Minecraft world and goal, output ONLY a JSON action.
 
 Action schema:
 {ACTION_SCHEMA_DESCRIPTION}
@@ -99,6 +106,47 @@ Rules:
 - Use attack=true to break blocks or hit entities
 - Use use=true to place blocks or interact"""
         self._last_inference_time = 0.0
+
+        # Ring buffer for last 5 frames (stores tuples of (timestamp, image_bytes))
+        self._frame_buffer: deque[tuple[float, bytes]] = deque(maxlen=5)
+        self._frame_counter = 0
+
+        # Ensure debug frames directory exists
+        DEBUG_FRAMES_DIR.mkdir(parents=True, exist_ok=True)
+        print(f"[Policy] Debug frames will be saved to: {DEBUG_FRAMES_DIR}")
+
+    def _save_frame_to_buffer(self, image_data_url: str) -> None:
+        """Extract image bytes from data URL and save to ring buffer."""
+        try:
+            # Parse data URL: "data:image/png;base64,<data>" or "data:image/jpeg;base64,<data>"
+            if not image_data_url.startswith("data:"):
+                return
+
+            # Extract the base64 part after the comma
+            comma_idx = image_data_url.find(",")
+            if comma_idx == -1:
+                return
+
+            b64_data = image_data_url[comma_idx + 1 :]
+            image_bytes = base64.b64decode(b64_data)
+
+            # Add to ring buffer with timestamp
+            self._frame_buffer.append((time.time(), image_bytes))
+            self._frame_counter += 1
+
+            # Save all frames in buffer to temp files
+            self._write_debug_frames()
+
+        except Exception as e:
+            print(f"[Policy] Error saving frame to buffer: {e}")
+
+    def _write_debug_frames(self) -> None:
+        """Write all frames in buffer to temp files."""
+        for i, (_timestamp, image_bytes) in enumerate(self._frame_buffer):
+            # Determine file extension from image header
+            ext = ".png" if image_bytes[:4] == b"\x89PNG" else ".jpg"
+            frame_path = DEBUG_FRAMES_DIR / f"frame_{i}{ext}"
+            frame_path.write_bytes(image_bytes)
 
     def get_action(
         self, image_data_url: str, goal: str, state: Optional[dict] = None
@@ -116,6 +164,9 @@ Rules:
         """
         start = time.perf_counter()
 
+        # Save frame to debug buffer
+        self._save_frame_to_buffer(image_data_url)
+
         # Build the user prompt
         user_text = f"Goal: {goal}"
         if state:
@@ -123,7 +174,7 @@ Rules:
 
         # Prepare the API request
         payload = {
-            "model": self.config.vllm_model,
+            "model": self.config.LLM_MODEL,
             "messages": [
                 {"role": "system", "content": self.system_prompt},
                 {
@@ -135,6 +186,10 @@ Rules:
                 },
             ],
             "max_tokens": self.config.max_new_tokens,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "top_k": 0,
+            "frequency_penalty": 1.1,
             "response_format": {
                 "type": "json_schema",
                 "json_schema": ACTION_JSON_SCHEMA,
@@ -144,7 +199,7 @@ Rules:
         try:
             # print(f"[Policy] Request: {json.dumps(payload)}")
             response = self.client.post(
-                f"{self.config.vllm_base_url}/chat/completions",
+                f"{self.config.LLM_BASE_URL}/chat/completions",
                 json=payload,
             )
             response.raise_for_status()
@@ -152,7 +207,7 @@ Rules:
 
             # Extract the content
             content = result["choices"][0]["message"]["content"]
-            print(f"[Policy] VLM response content: {content}")
+            print(f"[Policy] LLM response content: {content}")
 
             # Parse the JSON action
             action_dict = self._parse_action_json(content)

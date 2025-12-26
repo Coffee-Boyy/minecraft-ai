@@ -48,15 +48,16 @@ public class WsServer extends WebSocketServer {
             if (isFrameConfig) {
                 MinecraftAI.LOGGER.info("Processing frame_config message");
                 Protocol.FrameConfigMessage config = Protocol.FrameConfigMessage.fromJson(message);
-                MinecraftAI.LOGGER.info("Parsed config: enabled={}, {}x{}, every {} frames, quality={}",
-                    config.enabled, config.width, config.height, config.captureEveryNFrames, config.jpegQuality);
+                MinecraftAI.LOGGER.info("Parsed config: enabled={}",
+                    config.enabled);
 
                 if (frameCapture != null) {
-                    MinecraftAI.LOGGER.info("Configuring frame capture...");
-                    frameCapture.setEnabled(config.enabled);
+                    MinecraftAI.LOGGER.info("Configuring frame capture: enabled={}, {}x{}, every {} frames, quality={}",
+                        config.enabled, config.width, config.height, config.captureEveryNFrames, config.jpegQuality);
                     frameCapture.setResolution(config.width, config.height);
                     frameCapture.setCaptureRate(config.captureEveryNFrames);
                     frameCapture.setJpegQuality(config.jpegQuality);
+                    frameCapture.setEnabled(config.enabled);
                     MinecraftAI.LOGGER.info("Frame capture configured successfully");
                 } else {
                     MinecraftAI.LOGGER.warn("frameCapture is null!");

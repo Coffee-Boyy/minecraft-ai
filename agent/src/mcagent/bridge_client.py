@@ -100,7 +100,6 @@ class BridgeClient:
                 if isinstance(message, bytes):
                     self._handle_binary_message(message)
                 else:
-                    print(f"[DEBUG] Received text message: {message[:200]}")
                     await self._handle_message(message)
         except websockets.exceptions.ConnectionClosed:
             print("[DEBUG] WebSocket connection closed")
@@ -116,13 +115,10 @@ class BridgeClient:
             return
 
         msg_type = data[0]
-        print(f"[DEBUG] Received binary message: type={msg_type}, len={len(data)}")
         if msg_type == MSG_TYPE_FRAME:
             # Parse header: type(1) + seq(4) + ts(4) + jpeg_data
             seq, ts = struct.unpack(">II", data[1:9])
             frame_data = data[9:]
-
-            print(f"[DEBUG] Frame received: seq={seq}, ts={ts}, data_len={len(frame_data)}")
 
             self.latest_frame = frame_data
             self.latest_frame_seq = seq
