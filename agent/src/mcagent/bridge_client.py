@@ -32,6 +32,7 @@ class BridgeClient:
         self._on_ack_callback: Optional[Callable[[AckMessage], None]] = None
         self._on_frame_callback: Optional[Callable[[bytes, int, int], None]] = None
         self._last_send_time = 0.0
+        self._frames_logged = 0
 
         # Frame state
         self.latest_frame: Optional[bytes] = None
@@ -46,6 +47,9 @@ class BridgeClient:
             True if connection successful
         """
         try:
+            # Keep ping/pong enabled; with the agent now avoiding event-loop blocking,
+            # this should remain healthy. Keeping defaults is fine, but we log close
+            # reasons more explicitly in receive_messages().
             self.ws = await websockets.connect(self.ws_url)
             self.connected = True
 
@@ -98,11 +102,16 @@ class BridgeClient:
         try:
             async for message in self.ws:
                 if isinstance(message, bytes):
-                    self._handle_binary_message(message)
+                    try:
+                        self._handle_binary_message(message)
+                    except Exception as e:
+                        # Never let a bad frame kill the receive loop.
+                        print(f"[DEBUG] Error handling binary message ({len(message)} bytes): {e}")
                 else:
                     await self._handle_message(message)
-        except websockets.exceptions.ConnectionClosed:
-            print("[DEBUG] WebSocket connection closed")
+        except websockets.exceptions.ConnectionClosed as e:
+            # Includes code/reason which helps debug disconnects initiated by either side.
+            print(f"[DEBUG] WebSocket connection closed (code={e.code}, reason={e.reason})")
             self.connected = False
         except Exception as e:
             print(f"[DEBUG] Error receiving messages: {e}")
@@ -123,6 +132,11 @@ class BridgeClient:
             self.latest_frame = frame_data
             self.latest_frame_seq = seq
             self.latest_frame_ts = ts
+
+            # Lightweight periodic logging to confirm ongoing stream without spamming.
+            self._frames_logged += 1
+            if self._frames_logged <= 3 or self._frames_logged % 60 == 0:
+                print(f"[DEBUG] Frame received: seq={seq} ts={ts} bytes={len(frame_data)}")
 
             if self._on_frame_callback:
                 self._on_frame_callback(frame_data, seq, ts)

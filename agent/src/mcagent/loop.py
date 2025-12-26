@@ -46,7 +46,10 @@ class AgentLoop:
         self.stats = {
             "iterations": 0,
             "actions_sent": 0,
+            # Count of ack messages received from the mod (regardless of success).
             "actions_acked": 0,
+            # Count of ack messages with success=true.
+            "actions_succeeded": 0,
             "errors": 0,
             "frames_received": 0,
             "total_capture_ms": 0.0,
@@ -166,7 +169,12 @@ class AgentLoop:
                 }
 
             # 3. Get action from policy
-            action = self.policy.get_action(image_data_url, self.goal, state_dict)
+            # IMPORTANT: VLM inference uses a synchronous HTTP client. If we run it on the
+            # asyncio event loop thread, it blocks frame reception (binary websocket
+            # messages) and can cause the mod to disconnect us. Offload to a worker thread.
+            action = await asyncio.to_thread(
+                self.policy.get_action, image_data_url, self.goal, state_dict
+            )
             self.stats["total_inference_ms"] += self.policy.get_last_inference_time_ms()
 
             # 4. Send action to bridge
@@ -191,8 +199,9 @@ class AgentLoop:
     def _on_ack(self, ack: AckMessage):
         """Callback for action acknowledgments."""
         self.latest_ack = ack
+        self.stats["actions_acked"] += 1
         if ack.success:
-            self.stats["actions_acked"] += 1
+            self.stats["actions_succeeded"] += 1
 
     def _generate_stats_table(self) -> Table:
         """Generate a stats table for display."""
@@ -209,7 +218,8 @@ class AgentLoop:
 
         table.add_row("Iterations", str(self.stats["iterations"]))
         table.add_row("Actions Sent", str(self.stats["actions_sent"]))
-        table.add_row("Actions Acked", str(self.stats["actions_acked"]))
+        table.add_row("Acks Received", str(self.stats["actions_acked"]))
+        table.add_row("Actions Succeeded", str(self.stats["actions_succeeded"]))
         if self.use_mod_frames:
             table.add_row("Frames Received", str(self.stats["frames_received"]))
         table.add_row("Errors", str(self.stats["errors"]))

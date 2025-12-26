@@ -92,7 +92,9 @@ class VLMPolicy:
     def __init__(self, config: Config):
         """Initialize the VLM policy."""
         self.config = config
-        self.client = httpx.Client(timeout=30.0)
+        # NOTE: We deliberately avoid keeping a long-lived sync HTTP client here.
+        # The agent offloads inference to a worker thread, and httpx.Client is not
+        # guaranteed to be safe to use across threads.
         self.system_prompt = f"""You are a Minecraft control policy. Given a screenshot of the current Minecraft world and goal, output ONLY a JSON action.
 
 Action schema:
@@ -198,10 +200,11 @@ Rules:
 
         try:
             # print(f"[Policy] Request: {json.dumps(payload)}")
-            response = self.client.post(
-                f"{self.config.LLM_BASE_URL}/chat/completions",
-                json=payload,
-            )
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(
+                    f"{self.config.LLM_BASE_URL}/chat/completions",
+                    json=payload,
+                )
             response.raise_for_status()
             result = response.json()
 
@@ -299,4 +302,5 @@ Rules:
 
     def close(self):
         """Close the HTTP client."""
-        self.client.close()
+        # No-op: we create a short-lived httpx.Client per request for thread safety.
+        return

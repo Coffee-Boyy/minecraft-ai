@@ -1,6 +1,7 @@
 package me.coffeeboy;
 
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
+import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.minecraft.client.Minecraft;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11;
@@ -39,6 +40,10 @@ public class FrameCapture {
     private int lastBufferHeight = 0;
     private Consumer<byte[]> frameCallback;
 
+    // Timing (best-effort): exposed for metrics/HUD.
+    private volatile double lastCaptureMs = 0.0;
+    private volatile double lastEncodeMs = 0.0;
+
     // Async encoding with bounded queue to prevent memory buildup
     private final ExecutorService encoderExecutor;
 
@@ -61,20 +66,29 @@ public class FrameCapture {
      * Register for render events. Must be called during mod initialization.
      */
     public void register() {
-        WorldRenderEvents.END.register(context -> {
-            if (!enabled || frameCallback == null) {
-                return;
-            }
+        // In-world rendering: fires when a world is being rendered.
+        WorldRenderEvents.END.register(context -> maybeCapture());
 
-            frameCounter++;
-            if (frameCounter % captureEveryNFrames != 0) {
-                return;
-            }
-
-            captureFrame();
+        // UI/screens rendering (menus, inventory, chat, etc.).
+        // This makes "mod capture" work even when the player/world isn't active.
+        ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
+            ScreenEvents.afterRender(screen).register((s, drawContext, mouseX, mouseY, tickDelta) -> maybeCapture());
         });
 
         MinecraftAI.LOGGER.info("FrameCapture registered for WorldRenderEvents.END");
+    }
+
+    private void maybeCapture() {
+        if (!enabled || frameCallback == null) {
+            return;
+        }
+
+        frameCounter++;
+        if (frameCounter % captureEveryNFrames != 0) {
+            return;
+        }
+
+        captureFrame();
     }
 
     private void captureFrame() {
@@ -83,6 +97,7 @@ public class FrameCapture {
             return;
         }
 
+        long captureStartNs = System.nanoTime();
         int windowWidth = mc.getWindow().getWidth();
         int windowHeight = mc.getWindow().getHeight();
 
@@ -116,11 +131,15 @@ public class FrameCapture {
         final int th = targetHeight;
         final float quality = jpegQuality;
         final Consumer<byte[]> callback = frameCallback;
+        final double captureMs = (System.nanoTime() - captureStartNs) / 1_000_000.0;
 
         // Encode asynchronously
         encoderExecutor.submit(() -> {
+            long encodeStartNs = System.nanoTime();
             try {
                 byte[] encoded = encodeFrame(pixelData, w, h, tw, th, quality);
+                lastCaptureMs = captureMs;
+                lastEncodeMs = (System.nanoTime() - encodeStartNs) / 1_000_000.0;
                 if (encoded != null && callback != null) {
                     callback.accept(encoded);
                 }
@@ -218,6 +237,14 @@ public class FrameCapture {
 
     public void setFrameCallback(Consumer<byte[]> callback) {
         this.frameCallback = callback;
+    }
+
+    public double getLastCaptureMs() {
+        return lastCaptureMs;
+    }
+
+    public double getLastEncodeMs() {
+        return lastEncodeMs;
     }
 
     public void shutdown() {

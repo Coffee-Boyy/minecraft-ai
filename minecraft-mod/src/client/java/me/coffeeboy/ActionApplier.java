@@ -60,12 +60,32 @@ public class ActionApplier {
     public void tick() {
         LocalPlayer player = minecraft.player;
         if (player == null) {
+            // We're not in a world yet (e.g. title screen/loading). Drain any queued
+            // actions so the agent doesn't wait forever for acks.
+            PendingAction pending;
+            while ((pending = actionQueue.poll()) != null) {
+                Protocol.AckMessage ack = new Protocol.AckMessage();
+                ack.action_type = pending.action.type;
+                ack.success = false;
+                ack.error = "No player/world loaded";
+                pending.callback.accept(ack);
+            }
             return;
         }
 
         // Lazily initialize key bindings once options are available
         ensureKeysInitialized();
         if (!keysInitialized) {
+            // Options/keybindings not ready yet; drain queued actions to avoid
+            // unbounded queue growth and provide feedback to the agent.
+            PendingAction pending;
+            while ((pending = actionQueue.poll()) != null) {
+                Protocol.AckMessage ack = new Protocol.AckMessage();
+                ack.action_type = pending.action.type;
+                ack.success = false;
+                ack.error = "Key bindings not initialized yet";
+                pending.callback.accept(ack);
+            }
             return;
         }
 
@@ -105,13 +125,15 @@ public class ActionApplier {
             // Movement - simulate key presses via KeyMapping.setDown()
             keyForward.setDown(action.forward > 0);
             keyBack.setDown(action.forward < 0);
-            keyLeft.setDown(action.strafe > 0);
-            keyRight.setDown(action.strafe < 0);
+            // strafe: negative=left, positive=right
+            keyLeft.setDown(action.strafe < 0);
+            keyRight.setDown(action.strafe > 0);
 
             // Look
             if (action.yaw != 0 || action.pitch != 0) {
-                float newYaw = player.getYRot() + action.yaw;
-                float newPitch = Math.max(-90.0F, Math.min(90.0F, player.getXRot() + action.pitch));
+                // Treat yaw/pitch as absolute angles (matches the agent schema and Minecraft convention).
+                float newYaw = action.yaw;
+                float newPitch = Math.max(-90.0F, Math.min(90.0F, action.pitch));
                 player.setYRot(newYaw);
                 player.setXRot(newPitch);
                 player.yRotO = newYaw;

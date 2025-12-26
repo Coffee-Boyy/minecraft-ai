@@ -105,10 +105,9 @@ class BenchmarkRunner:
 
             # Get action from VLM
             t2 = time.perf_counter()
-            action = self.policy.get_action(
-                image_data_url,
-                goal="benchmark test",
-                state=None,
+            # Offload sync HTTP to avoid blocking receive_messages() background task.
+            action = await asyncio.to_thread(
+                self.policy.get_action, image_data_url, "benchmark test", None
             )
             t3 = time.perf_counter()
             t_vlm_ms = (t3 - t2) * 1000
@@ -142,8 +141,9 @@ class BenchmarkRunner:
 
     def _on_ack(self, ack: AckMessage):
         """Callback for action acknowledgments."""
-        if ack.success:
-            self.acks_received += 1
+        # Track acks received regardless of success, since this is primarily a
+        # transport/round-trip metric.
+        self.acks_received += 1
 
     def _analyze_results(self):
         """Analyze and display benchmark results."""
