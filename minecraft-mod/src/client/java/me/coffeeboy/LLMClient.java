@@ -4,13 +4,19 @@ import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import net.fabricmc.loader.api.FabricLoader;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Base64;
 
 import static me.coffeeboy.Protocol.ACTION_SCHEMA_DESCRIPTION;
@@ -23,15 +29,20 @@ import static me.coffeeboy.Protocol.ACTION_JSON_SCHEMA;
  */
 public final class LLMClient {
     private static final Gson GSON = new Gson();
+    private static final Object LOG_LOCK = new Object();
 
     private final HttpClient http;
     private final AgentConfig config;
+    private final boolean llmLogEnabled;
+    private final Path llmLogPath;
 
     public LLMClient(AgentConfig config) {
         this.config = config;
         this.http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
+        this.llmLogEnabled = config != null && config.llmLogEnabled;
+        this.llmLogPath = this.llmLogEnabled ? resolveLogPath(config.llmLogFile) : null;
     }
 
     public Protocol.ActionMessage requestAction(byte[] jpegBytes, String goal, Protocol.StateMessage state) throws Exception {
@@ -56,6 +67,8 @@ public final class LLMClient {
         String body = GSON.toJson(payload);
         URI uri = URI.create(config.llmBaseUrl + "/chat/completions");
 
+        logLlmIo("REQUEST", uri, body, null, null);
+
         HttpRequest req = HttpRequest.newBuilder()
             .uri(uri)
             .timeout(Duration.ofSeconds(60))
@@ -64,6 +77,7 @@ public final class LLMClient {
             .build();
 
         HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        logLlmIo("RESPONSE", uri, null, resp.statusCode(), resp.body());
         if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
             throw new RuntimeException("LLM HTTP " + resp.statusCode() + ": " + truncate(resp.body(), 500));
         }
@@ -72,30 +86,35 @@ public final class LLMClient {
     }
 
     private static JsonElement buildMessages(String goal, Protocol.StateMessage state, String imageDataUrl) {
-        JsonObject system = new JsonObject();
-        system.addProperty("role", "system");
-        system.addProperty("content",
-            "You are a Minecraft control policy. Given a screenshot of the current Minecraft world and goal, output ONLY a JSON action." +
-                "Action schema:\n" +
-                ACTION_SCHEMA_DESCRIPTION +
-
-                "Rules:\n" +
-                "- Output ONLY valid JSON, no explanation or markdown\n" +
-                "- Keep actions short (100-300ms duration) for responsive control\n" +
-                "- Use forward=1.0 to walk forward, strafe for sideways movement\n" +
-                "- Set jump=true to jump, sprint=true to run faster\n" +
-                "- Use attack=true to break blocks or hit entities\n" +
-                "- Use use=true to place blocks or interact");
-
         JsonObject user = new JsonObject();
         user.addProperty("role", "user");
 
         // Multi-part content: text + image_url (OpenAI vision style).
         com.google.gson.JsonArray parts = new com.google.gson.JsonArray();
 
+        JsonObject imagePart = new JsonObject();
+        imagePart.addProperty("type", "image_url");
+        JsonObject imageUrl = new JsonObject();
+        imageUrl.addProperty("url", imageDataUrl);
+        imagePart.add("image_url", imageUrl);
+        parts.add(imagePart);
+
+        // Embed the former system prompt into the first (and only) text message.
+        // Order parts: image first, then text.
         JsonObject textPart = new JsonObject();
         textPart.addProperty("type", "text");
         StringBuilder txt = new StringBuilder();
+        txt.append("You are a Minecraft control policy. Given a screenshot of the current Minecraft world and goal, output ONLY a JSON action.\n\n");
+        txt.append("Action schema:\n");
+        txt.append(ACTION_SCHEMA_DESCRIPTION).append("\n\n");
+        txt.append("Rules:\n");
+        txt.append("- Output ONLY valid JSON, no explanation or markdown\n");
+        txt.append("- Keep actions short (100-300ms duration) for responsive control\n");
+        txt.append("- Use forward=1.0 to walk forward, strafe for sideways movement\n");
+        txt.append("- Set jump=true to jump, sprint=true to run faster\n");
+        txt.append("- Use attack=true to break blocks or hit entities\n");
+        txt.append("- Use use=true to place blocks or interact\n\n");
+
         txt.append("Goal: ").append(goal);
         if (state != null && state.player != null && state.world != null) {
             txt.append("\nState: ")
@@ -108,17 +127,9 @@ public final class LLMClient {
         textPart.addProperty("text", txt.toString());
         parts.add(textPart);
 
-        JsonObject imagePart = new JsonObject();
-        imagePart.addProperty("type", "image_url");
-        JsonObject imageUrl = new JsonObject();
-        imageUrl.addProperty("url", imageDataUrl);
-        imagePart.add("image_url", imageUrl);
-        parts.add(imagePart);
-
         user.add("content", parts);
 
         com.google.gson.JsonArray messages = new com.google.gson.JsonArray();
-        messages.add(system);
         messages.add(user);
         return messages;
     }
@@ -191,6 +202,50 @@ public final class LLMClient {
 
     private static int clampInt(int v, int lo, int hi) {
         return Math.max(lo, Math.min(hi, v));
+    }
+
+    private void logLlmIo(String kind, URI uri, String requestBody, Integer statusCode, String responseBody) {
+        if (!llmLogEnabled || llmLogPath == null) return;
+        try {
+            StringBuilder sb = new StringBuilder();
+            sb.append("==== ").append(kind).append(" ").append(Instant.now().toString()).append(" ====\n");
+            sb.append("url: ").append(uri).append("\n");
+            if (requestBody != null) {
+                sb.append("body:\n").append(requestBody).append("\n");
+            }
+            if (statusCode != null) {
+                sb.append("status: ").append(statusCode).append("\n");
+            }
+            if (responseBody != null) {
+                sb.append("body:\n").append(responseBody).append("\n");
+            }
+            sb.append("\n");
+
+            synchronized (LOG_LOCK) {
+                Path parent = llmLogPath.getParent();
+                if (parent != null) Files.createDirectories(parent);
+                Files.writeString(
+                    llmLogPath,
+                    sb.toString(),
+                    StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.WRITE,
+                    StandardOpenOption.APPEND
+                );
+            }
+        } catch (Exception e) {
+            // Never let logging failures break the agent loop.
+            MinecraftAI.LOGGER.warn("Failed to write LLM log: {}", e.getMessage());
+        }
+    }
+
+    private static Path resolveLogPath(String logFile) {
+        String f = (logFile == null || logFile.isBlank()) ? "llm_api.log" : logFile.trim();
+        Path p = Paths.get(f);
+        if (p.isAbsolute()) {
+            return p;
+        }
+        return FabricLoader.getInstance().getGameDir().resolve(p);
     }
 }
 

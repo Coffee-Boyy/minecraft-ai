@@ -7,6 +7,8 @@ package me.coffeeboy;
  * Example (Gradle runClient):
  *   -Dminecraftai.llmBaseUrl=http://127.0.0.1:7000/v1
  *   -Dminecraftai.llmModel=Qwen/Qwen2-VL-2B-Instruct
+ *   -Dminecraftai.llmLogEnabled=1
+ *   -Dminecraftai.llmLogFile=llm_api.log
  */
 public final class AgentConfig {
     public final String llmBaseUrl;
@@ -28,6 +30,17 @@ public final class AgentConfig {
      */
     public final String debugFramesDir;
 
+    /**
+     * If enabled, writes full LLM HTTP request/response bodies to {@link #llmLogFile}.
+     * WARNING: requests include base64-encoded image data and can get very large.
+     */
+    public final boolean llmLogEnabled;
+    /**
+     * File path for LLM request/response logging.
+     * If relative, it's resolved against the Minecraft game dir.
+     */
+    public final String llmLogFile;
+
     private AgentConfig(
         String llmBaseUrl,
         String llmModel,
@@ -40,7 +53,9 @@ public final class AgentConfig {
         float jpegQuality,
         boolean debugSaveFrames,
         int debugSaveEveryNFrames,
-        String debugFramesDir
+        String debugFramesDir,
+        boolean llmLogEnabled,
+        String llmLogFile
     ) {
         this.llmBaseUrl = llmBaseUrl;
         this.llmModel = llmModel;
@@ -54,6 +69,8 @@ public final class AgentConfig {
         this.debugSaveFrames = debugSaveFrames;
         this.debugSaveEveryNFrames = debugSaveEveryNFrames;
         this.debugFramesDir = debugFramesDir;
+        this.llmLogEnabled = llmLogEnabled;
+        this.llmLogFile = llmLogFile;
     }
 
     public static AgentConfig fromSystemProperties() {
@@ -72,10 +89,14 @@ public final class AgentConfig {
         int debugEveryNFrames = parseInt(System.getProperty("minecraftai.debugSaveEveryNFrames", "30"), 30);
         String debugFramesDir = System.getProperty("minecraftai.debugFramesDir", "mcagent_frames");
 
+        boolean llmLogEnabled = parseBool(System.getProperty("minecraftai.llmLogEnabled", "0"), false);
+        String llmLogFile = System.getProperty("minecraftai.llmLogFile", "llm_api.log");
+
         return new AgentConfig(
             baseUrl, model, maxTokens, decisionHz, goal,
             width, height, everyN, quality,
-            debugSaveFrames, debugEveryNFrames, debugFramesDir
+            debugSaveFrames, debugEveryNFrames, debugFramesDir,
+            llmLogEnabled, llmLogFile
         );
     }
 
